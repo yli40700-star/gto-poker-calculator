@@ -168,6 +168,7 @@ class AgentLoop:
         recent: list[tuple] = []
         schema_failures = 0
         step_no = 0
+        refused = False
 
         while step_no < self.policy.max_react_steps:
             step_no += 1
@@ -190,7 +191,24 @@ class AgentLoop:
             result.latency_ms += response.latency_ms
             step.tokens = response.total_tokens
             step.latency_ms = response.latency_ms
-            step.thought = _thought_of(response)
+            # A model that thinks natively hands its reasoning back separately;
+            # that is the decision process a replay should show.
+            step.thought = (response.thinking or "")[:2000] or _thought_of(response)
+            step.served_by = response.served_by
+
+            if response.refusal:
+                # A safety decline is an outcome, not a malformed reply. Asking
+                # again with the same history would be declined again and billed
+                # again, so the turn goes straight to its default.
+                stats.fallback_used = "refusal"
+                stats.errors.append(f"refusal: {response.refusal}")
+                step.action = "<refusal>"
+                step.observation = f"declined ({response.refusal})"
+                step.guard_blocked = True
+                step.block_reason = "refusal"
+                result.react_trace.append(step.to_dict())
+                refused = True
+                break
 
             call = response.tool_calls[0] if response.tool_calls else None
             if call is None or call.malformed or not call.name:
@@ -203,7 +221,8 @@ class AgentLoop:
                 result.react_trace.append(step.to_dict())
                 if schema_failures > self.policy.max_retries:
                     break
-                messages.append({"role": "assistant", "content": response.text or ""})
+                messages.append({"role": "assistant", "content": response.text or "",
+                                 "native_content": response.native_content})
                 messages.append(
                     {
                         "role": "user",
@@ -227,7 +246,7 @@ class AgentLoop:
                 result.react_trace.append(step.to_dict())
                 if schema_failures > self.policy.max_retries:
                     break
-                self._append_turn(messages, call, f"[guard] {exc}")
+                self._append_turn(messages, call, f"[guard] {exc}", response)
                 continue
 
             step.action, step.args = name, dict(args)
@@ -270,14 +289,14 @@ class AgentLoop:
                     result.guard_blocks.append(blocked | {"step": step_no})
                     result.react_trace.append(step.to_dict())
                     stats.retries += 1
-                    self._append_turn(messages, call, f"[guard] {blocked['reason']}")
+                    self._append_turn(messages, call, f"[guard] {blocked['reason']}", response)
                     continue
 
                 applied = self._apply_terminal(state, player_id, name, args, step)
                 if applied is None:  # engine rejected it: re-decide
                     stats.retries += 1
                     result.react_trace.append(step.to_dict())
-                    self._append_turn(messages, call, f"[guard] {step.observation}")
+                    self._append_turn(messages, call, f"[guard] {step.observation}", response)
                     continue
 
                 result.react_trace.append(step.to_dict())
@@ -293,7 +312,7 @@ class AgentLoop:
                 step.guard_blocked = True
                 step.block_reason = "semantics"
                 result.react_trace.append(step.to_dict())
-                self._append_turn(messages, call, f"[guard] {exc}")
+                self._append_turn(messages, call, f"[guard] {exc}", response)
                 continue
 
             if name == "query_history":
@@ -334,13 +353,15 @@ class AgentLoop:
                     )
 
             result.react_trace.append(step.to_dict())
-            self._append_turn(messages, call, observation)
-            messages[2:] = self.context.trim_steps(messages[2:])
+            self._append_turn(messages, call, observation, response)
+            if not getattr(self.client, "append_only", False):
+                messages[2:] = self.context.trim_steps(messages[2:])
 
         # --- turn did not terminate on its own ---------------------------
         result.steps_used = step_no
         if result.speech is None and result.vote is None and result.night_action is None:
-            self._force_terminal(state, player_id, task, result, stats, messages, lookups)
+            self._force_terminal(state, player_id, task, result, stats, messages, lookups,
+                                 ask_model=not refused)
         result.belief_after = belief.snapshot()
         result.recovery = stats.to_dict()
         if self.tracer:
@@ -426,27 +447,34 @@ class AgentLoop:
         else:
             result.vote = args.get("target_id")
 
-    def _force_terminal(self, state, player_id, task, result, stats, messages, lookups):
+    def _force_terminal(self, state, player_id, task, result, stats, messages, lookups,
+                        ask_model: bool = True):
         """Out of steps, or the loop broke. Ask once, then fall back."""
         stats.forced_terminal = True
-        wanted = {"speak": "speak", "vote": "vote"}.get(task, "night action")
-        messages.append(
-            {
-                "role": "user",
-                "content": "[guard] You are out of steps. Reply with exactly one "
-                f"`{wanted}` call now.",
-            }
-        )
-        response = call_model(
-            self.client,
-            messages,
-            self.registry.openai_schemas(),
-            policy=self.policy,
-            stats=stats,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
         role = view_role(state, player_id)
+        response = None
+        if ask_model:
+            wanted = {"speak": "speak", "vote": "vote"}.get(task, "night action")
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "[guard] You are out of steps. Reply with exactly one "
+                    f"`{wanted}` call now.",
+                }
+            )
+            # The same tool list as every other step of the turn. Offering the
+            # full set here handed a villager the wolves' tools at the last
+            # step -- and changing the tool list mid-conversation also
+            # invalidates every thinking block that came before it.
+            response = call_model(
+                self.client,
+                messages,
+                self.registry.openai_schemas(role, task),
+                policy=self.policy,
+                stats=stats,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
         step = ReActStep(step=result.steps_used + 1, action="<forced>")
         if response is not None and response.tool_calls:
             result.prompt_tokens += response.prompt_tokens
@@ -482,12 +510,19 @@ class AgentLoop:
         if applied is not None:
             self._finish(result, name, args, applied, lookups, player_id)
 
-    def _append_turn(self, messages: list[dict], call, observation: str) -> None:
-        """Append the assistant call and its result in the client's own format."""
+    def _append_turn(self, messages: list[dict], call, observation: str,
+                     response=None) -> None:
+        """Append the assistant call and its result in the client's own format.
+
+        When the provider handed back its own content blocks, those travel with
+        the message and are what the provider is sent next time: Claude's
+        thinking blocks must be replayed exactly as they came.
+        """
         if getattr(self.client, "tool_mode", "native") == "native":
             messages.append(
                 {
                     "role": "assistant",
+                    "native_content": getattr(response, "native_content", None),
                     "content": None,
                     "tool_calls": [
                         {

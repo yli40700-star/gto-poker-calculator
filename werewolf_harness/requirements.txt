@@ -2,6 +2,10 @@
 # come from here rather than being hand-written; engine/ is a thin adapter.
 werewolf-engine==0.1.0
 
+# Claude via the Anthropic API. Only the direct-Claude path imports it; the
+# relay path, the offline client and most of the test suite run without it.
+anthropic>=1.9
+
 # Dashboard backend. Not needed for the CLI, the harness or the test suite.
 fastapi==0.115.0
 uvicorn==0.30.6
@@ -13,6 +17,6 @@ httpx>=0.27          # fastapi TestClient
 
 # Deliberately absent:
 #   no agent framework (the ReAct loop is the thing being measured)
-#   no openai sdk      (the gateway client speaks HTTP; the sdk is optional)
+#   no openai sdk      (the relay client speaks HTTP; the sdk is optional)
 #   no numpy/scipy     (Wilson and bootstrap intervals are stdlib arithmetic)
 #   no pyyaml          (configs are JSON)

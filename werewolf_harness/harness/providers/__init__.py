@@ -1,10 +1,17 @@
-"""Model access. One gateway, one client, no per-vendor branching."""
+"""Model access.
+
+Two ways to reach a model: an OpenAI-compatible gateway (any vendor, through a
+relay), or Claude directly through the Anthropic API. Which one is decided by
+the *provider*, never by the model name -- a relay serves Claude models too,
+under the same names.
+"""
 
 from __future__ import annotations
 
 import os
 
 from .base import LLMClient, LLMResponse, ProviderError, ToolCall, parse_json_action
+from .anthropic_client import AnthropicClient
 from .mock import MockClient
 from .openai_compat import OpenAICompatClient, explain
 from .probe import ProbeResult, probe_model
@@ -24,6 +31,15 @@ def build_client(config: dict) -> LLMClient:
             seed=int(config.get("seed", 0)),
             susceptibility=float(config.get("susceptibility", 0.75)),
         )
+    if provider_kind(config) == "anthropic":
+        return AnthropicClient(
+            model=model,
+            api_key=config.get("api_key") or os.getenv("ANTHROPIC_API_KEY", ""),
+            base_url=config.get("base_url") or None,
+            display_name=config.get("display_name"),
+            effort=config.get("effort") or "medium",
+            fallbacks=None if config.get("fallbacks") == "off" else "default",
+        )
     api_key = config.get("api_key") or os.getenv("LLM_API_KEY", "")
     return OpenAICompatClient(
         model=model,
@@ -35,7 +51,17 @@ def build_client(config: dict) -> LLMClient:
     )
 
 
+def provider_kind(config: dict) -> str:
+    """"anthropic" or "openai_compat". Explicit wins; otherwise the base URL
+    decides. The model name never does: a relay serves claude-* names too."""
+    kind = config.get("provider") or config.get("provider_kind")
+    if kind:
+        return kind
+    return "anthropic" if "api.anthropic.com" in (config.get("base_url") or "") else "openai_compat"
+
+
 __all__ = [
+    "AnthropicClient",
     "DEFAULT_BASE_URL",
     "LLMClient",
     "LLMResponse",
@@ -48,4 +74,5 @@ __all__ = [
     "explain",
     "parse_json_action",
     "probe_model",
+    "provider_kind",
 ]

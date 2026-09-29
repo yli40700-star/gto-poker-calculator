@@ -151,6 +151,12 @@ def run_game(cfg: RunConfig, human_ui=None, on_event=None) -> dict:
             )
 
         loops = {seat: loop_for(seat) for seat in range(1, 9)}
+        # Effort, thinking, sampling, context policy, fallbacks: each changes
+        # what a model does, so each is recorded next to the results it produced.
+        log["config"]["provider_settings"] = {
+            getattr(c, "name", "?"): c.describe() for c in clients.values()
+            if hasattr(c, "describe")
+        }
 
         players = list(range(1, 9))
         beliefs = {p: BeliefState(p, players) for p in players}
@@ -345,6 +351,13 @@ def _inject(state, injector: Injector, attacker: int, wolves: list[int], cfg: Ru
 _PRICES = {  # USD per 1M tokens (prompt, completion); override per experiment
     "default": (3.0, 15.0),
     "mock": (0.0, 0.0),
+    # Anthropic list prices. An upper bound: prompt tokens are counted raw, and
+    # cached reads bill at a fraction of this.
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-haiku-4-5": (1.0, 5.0),
 }
 
 

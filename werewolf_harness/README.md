@@ -32,7 +32,7 @@ evalkit/    runner, six metric axes, judges, statistics
 human/      a human seat, for the baseline that makes the numbers readable
 server/     FastAPI + SQLite: holds the API key, runs batches, serves logs
 web/        three pages; the replay view is the one that matters
-tests/      321 tests, including mandatory coverage of view isolation
+tests/      333 tests, including mandatory coverage of view isolation
 ```
 
 Rules are **not** hand-written. Roles, night-action priority, save/poison
@@ -70,6 +70,41 @@ python -m werewolf_harness.cli play --seat 3
 
 pytest werewolf_harness/tests -q
 ```
+
+---
+
+## Claude, directly
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m werewolf_harness.cli probe --provider anthropic --model claude-opus-5-5
+python -m werewolf_harness.cli demo  --provider anthropic --model claude-opus-5-5 --seed 5
+```
+
+or `setup-gateway` with the key in `.env`, then add the model on the config
+page. The provider decides the client, never the model name: a relay serves
+`claude-*` names too, and those stay on the relay.
+
+Five things differ from a relay model, and each would otherwise show up as a
+wrong number rather than an error. All five are recorded per game under
+`config.provider_settings`:
+
+| | what happens | why it matters here |
+|---|---|---|
+| **sampling** | no `temperature` is sent — current Claude models reject it | runs are not deterministic; the variance of an arm includes the model's own sampling. Report it as a limitation |
+| **thinking** | always on; `effort` (default `medium`) is the control, and it is a variable of the experiment | a reply cap sized for a non-thinking model cuts the reply off mid-thought — every turn then falls through to the default action |
+| **history** | thinking blocks are replayed verbatim, and a Claude turn is never trimmed (`context_policy: append_only`) | an edited history invalidates the thinking in it. The turns that run long enough to trim are the guard-blocked ones, so trimming would have degraded the guarded arms specifically |
+| **refusals** | recorded as `block_reason: "refusal"`, and the turn goes straight to its default — no re-ask | a decline is data in an injection study, not a malformed reply |
+| **fallbacks** | on by default; a turn answered by another model is tagged `served_by` | a seat that silently changes model corrupts the per-seat log. For the formal arms consider `--fallbacks off`, so a refusal is counted as one |
+
+`tests/fake_gateway.py --check` runs full games through the real `anthropic`
+SDK against a local server that enforces the Messages API's rules (thinking
+replayed unmodified and in its own conversation, every `tool_use` answered, no
+sampling parameters, no forced `tool_choice`) and records every request it
+would reject — a rejected request is absorbed by the loop's recovery and
+becomes an abstention, so a game that "finished" proves nothing on its own. It
+includes a negative control: with the old trimming switched back on, the check
+must fail, and it does.
 
 ---
 

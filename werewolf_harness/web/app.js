@@ -445,7 +445,7 @@ async function loadConfig() {
   el("providers").innerHTML =
     `<tr><th>${L.colName}</th><th>${L.colUrl}</th><th>${L.colKey}</th><th></th></tr>` +
     (providers.map((p) => `<tr>
-        <td>${esc(p.name)}</td><td class="mono">${esc(p.base_url)}</td>
+        <td>${esc(p.name)} <span class="muted">· ${p.kind === "anthropic" ? L.kindAnthropic : L.kindRelay}</span></td><td class="mono">${esc(p.base_url)}</td>
         <td class="mono muted">${esc(p.api_key_masked)}</td>
         <td><button class="action danger" data-del="${p.id}">${L.btnDelete}</button></td>
       </tr>`).join("") || `<tr><td colspan="4" class="muted">${L.empty}</td></tr>`);

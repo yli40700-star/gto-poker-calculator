@@ -21,7 +21,8 @@ from dataclasses import dataclass, field
 
 from .providers.base import ProviderError
 
-RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+# 529 is Anthropic's "overloaded": transient, and not covered by the 5xx it resembles.
+RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
 
 
 @dataclass

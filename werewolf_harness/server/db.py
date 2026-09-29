@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS providers (
     name TEXT NOT NULL,
     base_url TEXT NOT NULL,
     api_key TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'openai_compat',
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS models (
@@ -68,7 +69,20 @@ def connect(path: str | Path = DEFAULT_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn) -> None:
+    """Bring a database created by an earlier version up to date, in place.
+    Additive only: a column is added with a default, nothing is rewritten."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(providers)")}
+    if "kind" not in cols:
+        conn.execute("ALTER TABLE providers ADD COLUMN kind TEXT NOT NULL "
+                     "DEFAULT 'openai_compat'")
+        conn.execute("UPDATE providers SET kind = 'anthropic' "
+                     "WHERE base_url LIKE '%api.anthropic.com%'")
+        conn.commit()
 
 
 def new_id(prefix: str) -> str:
@@ -84,12 +98,17 @@ def mask_key(key: str) -> str:
 
 # ------------------------------------------------------------- providers
 
-def add_provider(conn, name: str, base_url: str, api_key: str) -> dict:
+def add_provider(conn, name: str, base_url: str, api_key: str,
+                 kind: str | None = None) -> dict:
+    if kind is None:
+        kind = "anthropic" if "api.anthropic.com" in base_url else "openai_compat"
+    if kind not in ("anthropic", "openai_compat"):
+        raise ValueError(f"unknown provider kind {kind!r}")
     pid = new_id("prov")
     conn.execute(
-        "INSERT INTO providers (id, name, base_url, api_key, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (pid, name, base_url.rstrip("/"), api_key, time.time()),
+        "INSERT INTO providers (id, name, base_url, api_key, kind, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (pid, name, base_url.rstrip("/"), api_key, kind, time.time()),
     )
     conn.commit()
     return get_provider(conn, pid)
@@ -117,6 +136,7 @@ def _provider_dict(row, with_key: bool) -> dict:
         "id": row["id"],
         "name": row["name"],
         "base_url": row["base_url"],
+        "kind": row["kind"],
         "api_key_masked": mask_key(row["api_key"]),
         "created_at": row["created_at"],
     }

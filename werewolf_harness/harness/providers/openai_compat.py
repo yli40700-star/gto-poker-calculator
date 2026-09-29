@@ -106,7 +106,7 @@ class OpenAICompatClient(LLMClient):
     ) -> LLMResponse:
         payload: dict = {
             "model": self.model,
-            "messages": messages,
+            "messages": _wire(messages),
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
@@ -114,7 +114,7 @@ class OpenAICompatClient(LLMClient):
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         elif tools:
-            payload["messages"] = _with_json_protocol(messages, tools)
+            payload["messages"] = _with_json_protocol(_wire(messages), tools)
 
         started = time.time()
         data = self._post("/chat/completions", payload, timeout)
@@ -180,6 +180,16 @@ class OpenAICompatClient(LLMClient):
         except Exception as exc:  # noqa: BLE001 -- listing is best-effort
             raise ProviderError(f"cannot list models: {exc}") from exc
         return [m.get("id", "") for m in data.get("data", [])]
+
+
+_WIRE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name")
+
+
+def _wire(messages: list[dict]) -> list[dict]:
+    """Only the fields the chat-completions API defines. The loop carries
+    provider-specific extras on its messages (Claude's native content blocks),
+    and a strict gateway rejects any field it does not know."""
+    return [{k: m[k] for k in _WIRE_KEYS if k in m} for m in messages]
 
 
 def _with_json_protocol(messages: list[dict], tools: list[dict]) -> list[dict]:

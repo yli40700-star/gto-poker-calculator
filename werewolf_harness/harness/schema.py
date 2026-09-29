@@ -58,6 +58,8 @@ class ReActStep:
     block_reason: str | None = None
     guard_detections: list[dict] = field(default_factory=list)
     injected: bool = False  # an attack payload was present in this observation
+    # Set only when a fallback model answered instead of the configured one.
+    served_by: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

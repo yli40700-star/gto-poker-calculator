@@ -30,7 +30,7 @@ from .openai_compat import OpenAICompatClient
 # so it needs its own -- a single transient 503 during phase 0 would otherwise
 # demote a perfectly good model and quietly change which models enter the
 # experiment.
-RETRYABLE = {408, 409, 429, 500, 502, 503, 504}
+RETRYABLE = {408, 409, 429, 500, 502, 503, 504, 529}
 ATTEMPTS = 3
 BACKOFF_S = 1.5
 
@@ -90,7 +90,7 @@ class ProbeResult:
 
 
 def probe_model(
-    client: OpenAICompatClient,
+    client,
     *,
     check_temperature: bool = True,
     timeout: float = 30.0,
@@ -118,14 +118,17 @@ def probe_model(
             "gateway returned no usage field; token cost must be estimated locally"
         )
 
-    # 2-3. native tool calling and argument parsing
-    native_client = OpenAICompatClient(
-        model=client.model,
-        api_key=client.api_key,
-        base_url=client.base_url,
-        tool_mode="native",
-        group=client.group,
-    )
+    # 2-3. native tool calling and argument parsing. A relay model is tried in
+    # native mode whatever it is configured for; Claude only has one mode.
+    native_client = client
+    if isinstance(client, OpenAICompatClient):
+        native_client = OpenAICompatClient(
+            model=client.model,
+            api_key=client.api_key,
+            base_url=client.base_url,
+            tool_mode="native",
+            group=client.group,
+        )
     try:
         tooled = _with_retry(lambda: native_client.chat(
             [{"role": "user", "content": "Call report_number with value 7."}],
@@ -150,6 +153,9 @@ def probe_model(
                     {
                         "role": "assistant",
                         "content": None,
+                        # Replayed verbatim where the provider returned its own
+                        # blocks -- a thinking model needs its thinking back.
+                        "native_content": tooled.native_content,
                         "tool_calls": [
                             {
                                 "id": call.id,
@@ -182,8 +188,14 @@ def probe_model(
             "no usable native function calling; this model runs in JSON-prompt mode"
         )
 
-    # 5. is temperature honoured?
-    if check_temperature:
+    # 5. is temperature honoured? Current Claude models take no sampling
+    # parameters at all, so there is nothing to check -- and nothing to claim.
+    if check_temperature and getattr(client, "accepts_sampling", True) is False:
+        result.notes.append(
+            "this model takes no sampling parameters; it samples at its own "
+            "default, so repeated runs are not deterministic (report as a limitation)"
+        )
+    elif check_temperature:
         try:
             outs = {
                 client.chat(

@@ -42,6 +42,16 @@ class LLMResponse:
     finish_reason: str = "stop"
     model: str = ""
     raw: dict | None = None
+    # Set by providers whose replies carry more than text and calls (Claude's
+    # thinking blocks). The loop appends these verbatim instead of rebuilding
+    # the assistant turn from the parsed call.
+    native_content: list | None = None
+    thinking: str = ""
+    # A safety decline: the category, or "unspecified". Not a malformed reply.
+    refusal: str | None = None
+    # The model that actually answered, when a fallback replaced the requested one.
+    served_by: str | None = None
+    cache_read_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -53,6 +63,14 @@ class LLMClient(ABC):
 
     name: str = "unknown"
     tool_mode: str = "native"
+    # True when earlier messages of a conversation must never be rewritten
+    # (the loop then skips its step-window trimming for this client).
+    append_only: bool = False
+
+    def describe(self) -> dict:
+        """Behaviour-relevant settings, recorded in the game log."""
+        return {"provider": getattr(self, "name", "unknown"),
+                "tool_mode": self.tool_mode}
 
     @abstractmethod
     def chat(

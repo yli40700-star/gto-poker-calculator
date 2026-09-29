@@ -3,6 +3,7 @@
     python -m werewolf_harness.cli demo                 one offline game, printed
     python -m werewolf_harness.cli ablation --seeds 20  the guard sweep + table
     python -m werewolf_harness.cli probe --model NAME   the phase-0 gateway probe
+                                  [--provider anthropic]  ...or Claude, directly
     python -m werewolf_harness.cli play                 join a game as a human
     python -m werewolf_harness.cli serve                the dashboard backend
 
@@ -165,60 +166,70 @@ def cmd_setup_gateway(args) -> int:
     """
     from .server import db as dbmod
 
-    base = os.getenv("LLM_BASE_URL", "")
-    if not base:
-        print("set LLM_BASE_URL (see .env.example)", file=sys.stderr)
-        return 2
-    if not base.rstrip("/").endswith("/v1"):
-        print(f"warning: {base} does not end in /v1, which most gateways require",
-              file=sys.stderr)
+    # (name, base_url, key, kind) for every provider the environment describes.
+    wanted: list[tuple[str, str, str, str]] = []
 
-    groups = [
-        (name, os.getenv(var, ""))
-        for name, var in (
-            ("openai-group", "LLM_KEY_OPENAI_GROUP"),
-            ("claude-group", "LLM_KEY_CLAUDE_GROUP"),
-        )
-    ]
-    groups = [(n, k) for n, k in groups if k]
-    if not groups:
-        if os.getenv("LLM_API_KEY"):
-            groups = [("default", os.environ["LLM_API_KEY"])]
-        else:
-            print("no keys in the environment; set LLM_KEY_*_GROUP or LLM_API_KEY",
+    base = os.getenv("LLM_BASE_URL", "")
+    if base:
+        if not base.rstrip("/").endswith("/v1"):
+            print(f"warning: {base} does not end in /v1, which most gateways require",
                   file=sys.stderr)
-            return 2
+        groups = [
+            (name, os.getenv(var, ""))
+            for name, var in (
+                ("openai-group", "LLM_KEY_OPENAI_GROUP"),
+                ("claude-group", "LLM_KEY_CLAUDE_GROUP"),
+            )
+        ]
+        groups = [(n, k) for n, k in groups if k]
+        if not groups and os.getenv("LLM_API_KEY"):
+            groups = [("default", os.environ["LLM_API_KEY"])]
+        wanted += [(n, base, k, "openai_compat") for n, k in groups]
+
+    if os.getenv("ANTHROPIC_API_KEY"):
+        wanted.append(("anthropic",
+                       os.getenv("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
+                       os.environ["ANTHROPIC_API_KEY"], "anthropic"))
+
+    if not wanted:
+        print("no keys in the environment: set ANTHROPIC_API_KEY for Claude direct, "
+              "or LLM_BASE_URL with LLM_KEY_*_GROUP / LLM_API_KEY for a relay "
+              "(see .env.example)", file=sys.stderr)
+        return 2
 
     conn = dbmod.connect(args.db)
     existing = {p["name"] for p in dbmod.list_providers(conn)}
-    for name, key in groups:
+    for name, url, key, kind in wanted:
         if name in existing:
             print(f"  {name}: already registered, left alone")
             continue
-        provider = dbmod.add_provider(conn, name, base, key)
-        print(f"  {name}: {provider['api_key_masked']} -> {base}")
+        provider = dbmod.add_provider(conn, name, url, key, kind)
+        print(f"  {name}: {provider['api_key_masked']} -> {url}  ({kind})")
 
     print(f"\n{len(dbmod.list_providers(conn))} provider(s) in {args.db}")
-    print("Next: add a model with the name COPIED from the gateway's model list "
-          "(never typed), then probe it:")
-    print("  python -m werewolf_harness.cli serve      # config page, or")
-    print("  python -m werewolf_harness.cli probe --model <name> --group <group>")
+    print("Next: add a model on the config page, then probe it before any batch:")
+    print("  python -m werewolf_harness.cli serve")
+    if any(kind == "anthropic" for *_, kind in wanted):
+        print("  python -m werewolf_harness.cli probe --provider anthropic --model claude-opus-5-5")
+    if any(kind == "openai_compat" for *_, kind in wanted):
+        print("  python -m werewolf_harness.cli probe --model <name COPIED from the relay's "
+              "model list> --group <group>")
     return 0
 
 
 def cmd_probe(args) -> int:
-    from .harness.providers import OpenAICompatClient, probe_model
+    from .harness.providers import ProviderError, build_client, probe_model
 
-    key = args.api_key or os.getenv("LLM_API_KEY", "")
-    if not key:
-        print("no API key: pass --api-key or set LLM_API_KEY", file=sys.stderr)
+    config = _model_config(args)
+    if not config.get("api_key"):
+        var = "ANTHROPIC_API_KEY" if args.provider == "anthropic" else "LLM_API_KEY"
+        print(f"no API key: pass --api-key or set {var}", file=sys.stderr)
         return 2
-    client = OpenAICompatClient(
-        model=args.model,
-        api_key=key,
-        base_url=args.base_url or os.getenv("LLM_BASE_URL", ""),
-        group=args.group,
-    )
+    try:
+        client = build_client(config)
+    except ProviderError as exc:
+        print(f"{exc}\n  hint: {exc.hint}", file=sys.stderr)
+        return 2
     result = probe_model(client, check_temperature=not args.skip_temperature)
     print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     return 0 if result.reachable else 1
@@ -247,6 +258,16 @@ def cmd_serve(args) -> int:
 def _model_config(args) -> dict:
     if args.model == "mock":
         return {"model_name": "mock"}
+    if getattr(args, "provider", "relay") == "anthropic":
+        return {
+            "provider": "anthropic",
+            "model_name": args.model,
+            "display_name": args.model,
+            "api_key": getattr(args, "api_key", None) or os.getenv("ANTHROPIC_API_KEY", ""),
+            "base_url": getattr(args, "base_url", None) or os.getenv("ANTHROPIC_BASE_URL"),
+            "effort": getattr(args, "effort", "medium"),
+            "fallbacks": getattr(args, "fallbacks", "default"),
+        }
     return {
         "model_name": args.model,
         "display_name": args.model,
@@ -331,6 +352,13 @@ def main(argv=None) -> int:
         p.add_argument("--base-url", default=None)
         p.add_argument("--tool-mode", default="native", choices=["native", "json_prompt"])
         p.add_argument("--group", default=None, help="gateway token group")
+        p.add_argument("--provider", default="relay", choices=["relay", "anthropic"],
+                       help="an OpenAI-compatible relay, or Claude via the Anthropic API")
+        p.add_argument("--effort", default="medium",
+                       choices=["low", "medium", "high", "xhigh", "max"],
+                       help="Claude thinking effort (recorded in every game log)")
+        p.add_argument("--fallbacks", default="default", choices=["default", "off"],
+                       help="Claude refusal fallbacks; 'off' records a refusal as a refusal")
 
     demo = sub.add_parser("demo", help="play one game and print it")
     add_common(demo)
@@ -358,7 +386,7 @@ def main(argv=None) -> int:
     seed_db.set_defaults(func=cmd_seed_db)
 
     setup = sub.add_parser("setup-gateway",
-                           help="register relay providers from the environment")
+                           help="register providers (relay and/or Anthropic) from the environment")
     setup.add_argument("--db", default="werewolf_harness.db")
     setup.set_defaults(func=cmd_setup_gateway)
 

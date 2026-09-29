@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from ..attacks import CATEGORIES
 from ..evalkit import metrics
 from ..evalkit.runner import RunConfig, run_game
-from ..harness.providers import OpenAICompatClient, ProviderError, probe_model
+from ..harness.providers import ProviderError, build_client, probe_model
 from . import db
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -48,6 +48,8 @@ class ProviderIn(BaseModel):
     name: str
     base_url: str
     api_key: str = Field(..., min_length=1)
+    # "anthropic" or "openai_compat"; inferred from base_url when omitted.
+    kind: str | None = None
 
 
 class ModelIn(BaseModel):
@@ -91,8 +93,12 @@ def get_providers():
 
 @app.post("/api/providers")
 def post_provider(body: ProviderIn):
-    provider = db.add_provider(conn, body.name, body.base_url, body.api_key)
-    if not body.base_url.rstrip("/").endswith("/v1"):
+    try:
+        provider = db.add_provider(conn, body.name, body.base_url, body.api_key,
+                                   body.kind)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if provider["kind"] != "anthropic" and not body.base_url.rstrip("/").endswith("/v1"):
         # Not fatal (gateways differ) but it is the single most common setup
         # mistake, so it comes back as a warning rather than as a 404 later.
         provider["warning"] = (
@@ -145,12 +151,7 @@ def probe(model_id: str, check_temperature: bool = False):
     if provider is None:
         raise HTTPException(404, "the model's provider no longer exists")
     try:
-        client = OpenAICompatClient(
-            model=model["model_name"],
-            api_key=provider["api_key"],
-            base_url=provider["base_url"],
-            group=model["group"],
-        )
+        client = build_client(_model_config(model_id))
     except ProviderError as exc:
         raise HTTPException(400, {"error": str(exc), "hint": exc.hint}) from exc
     result = probe_model(client, check_temperature=check_temperature).to_dict()
@@ -380,6 +381,7 @@ def _model_config(model_id: str | None) -> dict:
         "base_url": provider["base_url"],
         "tool_mode": model["tool_mode"],
         "group": model["group"],
+        "provider": provider["kind"],
     }
 
 
