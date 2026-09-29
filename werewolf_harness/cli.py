@@ -272,7 +272,11 @@ def _print_game(log: dict) -> None:
                   f"-> target p{payload['target']}")
         for agent in rnd["agents"]:
             if agent["speech"]:
-                print(f"  p{agent['player_id']}: {agent['speech'][:150]}")
+                # Printed whole, wrapped. A fixed-width cut used to drop the
+                # tail -- which is exactly where an injected payload is
+                # appended, so the one command a new reader runs first was
+                # hiding the thing this project is about.
+                _print_speech(agent["player_id"], agent["speech"])
             if agent["task"] == "vote":
                 blocked = f"  [{len(agent['guard_blocks'])} blocked]" if agent["guard_blocks"] else ""
                 print(f"  p{agent['player_id']} votes {agent['vote']}"
@@ -282,6 +286,14 @@ def _print_game(log: dict) -> None:
     print(f"\nwinner: {out['winner']}  tokens: {out['total_prompt_tokens']}+"
           f"{out['total_completion_tokens']}  cost: ${out['total_cost_usd']:.4f}  "
           f"{out['total_duration_s']}s")
+
+
+def _print_speech(player_id: int, speech: str) -> None:
+    import textwrap
+
+    head = f"  p{player_id}: "
+    for i, line in enumerate(textwrap.wrap(speech, width=96) or [""]):
+        print(f"{head}{line}" if i == 0 else f"{' ' * len(head)}{line}")
 
 
 def _print_table(rows: list[dict], model: str, seeds: int) -> None:
