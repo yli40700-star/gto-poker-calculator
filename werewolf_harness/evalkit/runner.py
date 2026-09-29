@@ -104,6 +104,7 @@ def run_game(cfg: RunConfig, human_ui=None, on_event=None) -> dict:
     log["config"]["human_players"] = list(cfg.human_players)
 
     emit = on_event or (lambda *_a, **_k: None)
+    clients: dict[str, object] = {}
 
     try:
         state = GameState.new(cfg.seed)
@@ -131,7 +132,6 @@ def run_game(cfg: RunConfig, human_ui=None, on_event=None) -> dict:
         # One client per distinct model config, one loop per seat. The loops
         # share the guard, the registry and the tracer, so guard counters stay
         # game-level while each seat can be served by its own model.
-        clients: dict[str, object] = {}
 
         def loop_for(seat: int) -> AgentLoop:
             spec = (cfg.seat_models or {}).get(seat, cfg.model)
@@ -241,6 +241,11 @@ def run_game(cfg: RunConfig, human_ui=None, on_event=None) -> dict:
         log["outcome"]["crashed"] = True
         log["outcome"]["crash_reason"] = f"{type(exc).__name__}: {exc}"
         log["outcome"]["traceback"] = traceback.format_exc()[-2000:]
+    finally:
+        for client in clients.values():
+            close = getattr(client, "close", None)
+            if close:
+                close()  # the CLI client's scratch directory and sessions
 
     def _all_turns(rounds):
         for rnd in rounds:
@@ -362,6 +367,8 @@ _PRICES = {  # USD per 1M tokens (prompt, completion); override per experiment
 
 
 def _estimate_cost(model: dict, prompt_tokens: int, completion_tokens: int) -> float:
+    if model.get("provider") == "claude_cli":
+        return 0.0  # a subscription: not billed per token (the token counts stand)
     name = model.get("model_name", "default")
     price = model.get("price") or _PRICES.get(name, _PRICES["default"])
     return round(prompt_tokens / 1e6 * price[0] + completion_tokens / 1e6 * price[1], 6)

@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ..attacks import CATEGORIES
 from ..evalkit import metrics
@@ -47,8 +47,9 @@ _lock = threading.Lock()
 class ProviderIn(BaseModel):
     name: str
     base_url: str
-    api_key: str = Field(..., min_length=1)
-    # "anthropic" or "openai_compat"; inferred from base_url when omitted.
+    api_key: str = ""
+    # "claude_cli", "anthropic" or "openai_compat"; inferred from base_url
+    # when omitted. Only claude_cli needs no key: the CLI's own login pays.
     kind: str | None = None
 
 
@@ -93,12 +94,16 @@ def get_providers():
 
 @app.post("/api/providers")
 def post_provider(body: ProviderIn):
+    if body.kind != "claude_cli" and not body.api_key:
+        raise HTTPException(422, "an API key is required for this provider")
+    if body.kind == "claude_cli":
+        body.base_url = body.base_url or "claude -p"
     try:
         provider = db.add_provider(conn, body.name, body.base_url, body.api_key,
                                    body.kind)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if provider["kind"] != "anthropic" and not body.base_url.rstrip("/").endswith("/v1"):
+    if provider["kind"] == "openai_compat" and not body.base_url.rstrip("/").endswith("/v1"):
         # Not fatal (gateways differ) but it is the single most common setup
         # mistake, so it comes back as a warning rather than as a 404 later.
         provider["warning"] = (
@@ -379,7 +384,7 @@ def _model_config(model_id: str | None) -> dict:
         "display_name": model["display_name"],
         "api_key": provider["api_key"],
         "base_url": provider["base_url"],
-        "tool_mode": model["tool_mode"],
+        "tool_mode": "json_prompt" if provider["kind"] == "claude_cli" else model["tool_mode"],
         "group": model["group"],
         "provider": provider["kind"],
     }

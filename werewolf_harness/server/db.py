@@ -102,7 +102,7 @@ def add_provider(conn, name: str, base_url: str, api_key: str,
                  kind: str | None = None) -> dict:
     if kind is None:
         kind = "anthropic" if "api.anthropic.com" in base_url else "openai_compat"
-    if kind not in ("anthropic", "openai_compat"):
+    if kind not in ("anthropic", "openai_compat", "claude_cli"):
         raise ValueError(f"unknown provider kind {kind!r}")
     pid = new_id("prov")
     conn.execute(

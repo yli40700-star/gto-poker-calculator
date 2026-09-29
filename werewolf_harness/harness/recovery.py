@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from .providers.base import ProviderError
+from .providers.base import ProviderError, ProviderExhausted
 
 # 529 is Anthropic's "overloaded": transient, and not covered by the 5xx it resembles.
 RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
@@ -75,6 +75,8 @@ def call_model(client, messages, tools, *, policy: RecoveryPolicy, stats: Recove
                 max_tokens=max_tokens,
                 timeout=policy.timeout_s,
             )
+        except ProviderExhausted:
+            raise  # abandon the game; see ProviderExhausted
         except ProviderError as exc:
             retryable = exc.status in RETRYABLE_STATUS or exc.status is None
             stats.errors.append(str(exc)[:200])

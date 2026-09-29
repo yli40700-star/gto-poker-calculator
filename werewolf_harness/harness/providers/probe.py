@@ -183,7 +183,12 @@ def probe_model(
         "native" if (result.native_tools and result.args_parse and result.multi_turn_tools)
         else "json_prompt"
     )
-    if result.tool_mode == "json_prompt":
+    if not isinstance(client, OpenAICompatClient) and client.tool_mode != "native":
+        # A client that only speaks the JSON protocol (claude -p): the checks
+        # above ran through it, so they test the protocol, not native calling.
+        result.tool_mode = client.tool_mode
+        result.notes.append("tool calls go through the JSON protocol")
+    if result.tool_mode == "json_prompt" and isinstance(client, OpenAICompatClient):
         result.notes.append(
             "no usable native function calling; this model runs in JSON-prompt mode"
         )

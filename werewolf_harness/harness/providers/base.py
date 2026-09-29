@@ -23,6 +23,14 @@ class ProviderError(Exception):
         self.status = status
 
 
+class ProviderExhausted(ProviderError):
+    """A limit that will not lift within the game (a subscription's usage cap).
+
+    Retrying is pointless, and letting the loop fall back to a default action
+    would record an abstention the model never chose. The game is abandoned
+    instead, and counted as crashed."""
+
+
 @dataclass
 class ToolCall:
     name: str

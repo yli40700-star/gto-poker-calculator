@@ -1,7 +1,8 @@
 """Model access.
 
-Two ways to reach a model: an OpenAI-compatible gateway (any vendor, through a
-relay), or Claude directly through the Anthropic API. Which one is decided by
+Three ways to reach a model: an OpenAI-compatible gateway (any vendor, through
+a relay), Claude through the Anthropic API (billed per token), or Claude
+through `claude -p` (the Claude Code CLI, on a Claude subscription). Which one is decided by
 the *provider*, never by the model name -- a relay serves Claude models too,
 under the same names.
 """
@@ -10,8 +11,16 @@ from __future__ import annotations
 
 import os
 
-from .base import LLMClient, LLMResponse, ProviderError, ToolCall, parse_json_action
+from .base import (
+    LLMClient,
+    LLMResponse,
+    ProviderError,
+    ProviderExhausted,
+    ToolCall,
+    parse_json_action,
+)
 from .anthropic_client import AnthropicClient
+from .claude_cli import ClaudeCLIClient
 from .mock import MockClient
 from .openai_compat import OpenAICompatClient, explain
 from .probe import ProbeResult, probe_model
@@ -30,6 +39,13 @@ def build_client(config: dict) -> LLMClient:
         return MockClient(
             seed=int(config.get("seed", 0)),
             susceptibility=float(config.get("susceptibility", 0.75)),
+        )
+    if provider_kind(config) == "claude_cli":
+        return ClaudeCLIClient(
+            model=model,
+            display_name=config.get("display_name"),
+            effort=config.get("effort") or "medium",
+            executable=config.get("executable"),
         )
     if provider_kind(config) == "anthropic":
         return AnthropicClient(
@@ -52,7 +68,7 @@ def build_client(config: dict) -> LLMClient:
 
 
 def provider_kind(config: dict) -> str:
-    """"anthropic" or "openai_compat". Explicit wins; otherwise the base URL
+    """"claude_cli", "anthropic" or "openai_compat". Explicit wins; otherwise the base URL
     decides. The model name never does: a relay serves claude-* names too."""
     kind = config.get("provider") or config.get("provider_kind")
     if kind:
@@ -62,6 +78,8 @@ def provider_kind(config: dict) -> str:
 
 __all__ = [
     "AnthropicClient",
+    "ClaudeCLIClient",
+    "ProviderExhausted",
     "DEFAULT_BASE_URL",
     "LLMClient",
     "LLMResponse",

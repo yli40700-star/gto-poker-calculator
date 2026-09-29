@@ -445,7 +445,7 @@ async function loadConfig() {
   el("providers").innerHTML =
     `<tr><th>${L.colName}</th><th>${L.colUrl}</th><th>${L.colKey}</th><th></th></tr>` +
     (providers.map((p) => `<tr>
-        <td>${esc(p.name)} <span class="muted">· ${p.kind === "anthropic" ? L.kindAnthropic : L.kindRelay}</span></td><td class="mono">${esc(p.base_url)}</td>
+        <td>${esc(p.name)} <span class="muted">· ${({claude_cli: L.kindCli, anthropic: L.kindAnthropic})[p.kind] || L.kindRelay}</span></td><td class="mono">${esc(p.base_url)}</td>
         <td class="mono muted">${esc(p.api_key_masked)}</td>
         <td><button class="action danger" data-del="${p.id}">${L.btnDelete}</button></td>
       </tr>`).join("") || `<tr><td colspan="4" class="muted">${L.empty}</td></tr>`);
@@ -511,10 +511,12 @@ async function probeModel(id) {
 
 el("add-provider").onclick = async () => {
   try {
+    const kind = el("p-kind").value;
     const created = await api.post("/api/providers", {
-      name: el("p-name").value || "relay",
-      base_url: el("p-url").value,
+      name: el("p-name").value || kind,
+      base_url: el("p-url").value || (kind === "anthropic" ? "https://api.anthropic.com" : ""),
       api_key: el("p-key").value,
+      kind,
     });
     el("p-key").value = "";
     el("provider-msg").textContent = created.warning || t().providerSaved;

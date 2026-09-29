@@ -32,7 +32,7 @@ evalkit/    runner, six metric axes, judges, statistics
 human/      a human seat, for the baseline that makes the numbers readable
 server/     FastAPI + SQLite: holds the API key, runs batches, serves logs
 web/        three pages; the replay view is the one that matters
-tests/      333 tests, including mandatory coverage of view isolation
+tests/      338 tests, including mandatory coverage of view isolation
 ```
 
 Rules are **not** hand-written. Roles, night-action priority, save/poison
@@ -73,7 +73,45 @@ pytest werewolf_harness/tests -q
 
 ---
 
-## Claude, directly
+## Claude on your subscription (`claude -p`)
+
+```bash
+claude                      # once: log in with your Claude subscription
+python -m werewolf_harness.cli probe --provider claude-cli --model claude-opus-5-5
+python -m werewolf_harness.cli demo  --provider claude-cli --model claude-opus-5-5 --seed 5
+```
+
+Each harness step is one `claude -p` call: tools off, one turn, the harness's
+JSON protocol. Usage counts against the subscription, not an API key; the game
+log records `billing: Claude subscription` and a cost of zero (token counts are
+still reported). What the client pins down, each found by testing the real CLI:
+
+- **billing**: `ANTHROPIC_API_KEY` is removed from the child's environment —
+  if set, the CLI bills it instead of the subscription. `--bare` is not used
+  for the same reason.
+- **nothing from the machine in the prompt**: without `--setting-sources ""`
+  a `CLAUDE.md` in the working directory reached the model despite
+  `--system-prompt` (a planted instruction was obeyed). The child runs in an
+  empty directory of its own.
+- **no inherited session**: variables from a parent Claude Code session
+  (including its effort level) are stripped; effort is always explicit.
+- **one call per step**: the CLI's auxiliary calls are switched off
+  (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`); they doubled the calls.
+- **real turn boundaries**: a multi-step turn is one CLI session continued
+  with `--resume`. Flattening the history into one prompt would let a speech
+  that forges "[assistant]" cross a role boundary — an injection surface
+  created by the transport and measured as the model's.
+- **usage limits**: hitting the subscription's cap abandons the game (counted
+  as crashed) instead of letting the seat default to an abstention it never
+  chose.
+
+Not removable, and recorded under `provider_settings.injected_by_cli`: the
+CLI prefixes the system prompt with an Agent-SDK identity line and adds
+environment, model and date lines. They are identical for every seat and arm.
+
+---
+
+## Claude, directly (Anthropic API, per-token)
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...

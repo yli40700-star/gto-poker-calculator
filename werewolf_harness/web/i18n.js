@@ -76,8 +76,8 @@ const I18N = {
 
     /* --- 配置 --- */
     hProviders: "接入点",
-    providerNote: "令牌只存在服务端，永远不会回传到这个页面；浏览器也从不直接请求网关。base_url 填 https://api.anthropic.com 就是直连 Claude（Anthropic API），其余按 OpenAI 兼容中转站处理。",
-    kindAnthropic: "Claude 直连", kindRelay: "中转站",
+    providerNote: "令牌只存在服务端，永远不会回传到这个页面；浏览器也从不直接请求网关。选"Claude 订阅"时不用填 base_url 和令牌：走本机已登录的 claude 命令，用的是你的订阅额度。",
+    kindAnthropic: "Claude API（按 token 计费）", kindRelay: "中转站", kindCli: "Claude 订阅（claude -p）", fKind: "接入方式",
     fName: "名称", fBaseUrl: "base_url", fKey: "令牌", btnAdd: "添加",
     colName: "名称", colUrl: "base_url", colKey: "令牌", colOps: "",
     btnDelete: "删除", empty: "还没有",
@@ -180,8 +180,8 @@ const I18N = {
     ballot: "ballot: ", abstained: "abstained",
 
     hProviders: "providers",
-    providerNote: "The key is stored server-side and never sent back to this page. The browser never talks to the gateway directly. A base_url of https://api.anthropic.com means Claude direct (the Anthropic API); anything else is treated as an OpenAI-compatible relay.",
-    kindAnthropic: "Claude direct", kindRelay: "relay",
+    providerNote: "The key is stored server-side and never sent back to this page. The browser never talks to the gateway directly. "Claude subscription" needs no base_url or key: it runs the locally logged-in claude command, on your subscription.",
+    kindAnthropic: "Claude API (per-token)", kindRelay: "relay", kindCli: "Claude subscription (claude -p)", fKind: "via",
     fName: "name", fBaseUrl: "base_url", fKey: "api key", btnAdd: "add",
     colName: "name", colUrl: "base url", colKey: "key", colOps: "",
     btnDelete: "delete", empty: "none yet",

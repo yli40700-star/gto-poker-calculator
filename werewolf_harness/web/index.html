@@ -77,6 +77,11 @@
       <p class="muted note" data-i18n="providerNote"></p>
       <table id="providers"></table>
       <div class="row" style="margin-top:12px">
+        <div><label data-i18n="fKind"></label><select id="p-kind">
+          <option value="claude_cli" data-i18n="kindCli"></option>
+          <option value="anthropic" data-i18n="kindAnthropic"></option>
+          <option value="openai_compat" data-i18n="kindRelay"></option>
+        </select></div>
         <div class="grow"><label data-i18n="fName"></label><input id="p-name" placeholder="中转站 · Claude 分组"></div>
         <div class="grow"><label data-i18n="fBaseUrl"></label><input id="p-url" placeholder="https://api.example.com/v1"></div>
         <div class="grow"><label data-i18n="fKey"></label><input id="p-key" type="password" placeholder="sk-..."></div>

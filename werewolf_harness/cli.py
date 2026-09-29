@@ -3,7 +3,7 @@
     python -m werewolf_harness.cli demo                 one offline game, printed
     python -m werewolf_harness.cli ablation --seeds 20  the guard sweep + table
     python -m werewolf_harness.cli probe --model NAME   the phase-0 gateway probe
-                                  [--provider anthropic]  ...or Claude, directly
+                    [--provider anthropic|claude-cli]   ...or Claude, directly
     python -m werewolf_harness.cli play                 join a game as a human
     python -m werewolf_harness.cli serve                the dashboard backend
 
@@ -221,7 +221,7 @@ def cmd_probe(args) -> int:
     from .harness.providers import ProviderError, build_client, probe_model
 
     config = _model_config(args)
-    if not config.get("api_key"):
+    if not config.get("api_key") and args.provider != "claude-cli":
         var = "ANTHROPIC_API_KEY" if args.provider == "anthropic" else "LLM_API_KEY"
         print(f"no API key: pass --api-key or set {var}", file=sys.stderr)
         return 2
@@ -230,7 +230,12 @@ def cmd_probe(args) -> int:
     except ProviderError as exc:
         print(f"{exc}\n  hint: {exc.hint}", file=sys.stderr)
         return 2
-    result = probe_model(client, check_temperature=not args.skip_temperature)
+    try:
+        result = probe_model(client, check_temperature=not args.skip_temperature)
+    finally:
+        close = getattr(client, "close", None)
+        if close:
+            close()
     print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     return 0 if result.reachable else 1
 
@@ -258,6 +263,14 @@ def cmd_serve(args) -> int:
 def _model_config(args) -> dict:
     if args.model == "mock":
         return {"model_name": "mock"}
+    if getattr(args, "provider", "relay") == "claude-cli":
+        return {
+            "provider": "claude_cli",
+            "model_name": args.model,
+            "display_name": args.model,
+            "effort": getattr(args, "effort", "medium"),
+            "tool_mode": "json_prompt",
+        }
     if getattr(args, "provider", "relay") == "anthropic":
         return {
             "provider": "anthropic",
@@ -352,8 +365,11 @@ def main(argv=None) -> int:
         p.add_argument("--base-url", default=None)
         p.add_argument("--tool-mode", default="native", choices=["native", "json_prompt"])
         p.add_argument("--group", default=None, help="gateway token group")
-        p.add_argument("--provider", default="relay", choices=["relay", "anthropic"],
-                       help="an OpenAI-compatible relay, or Claude via the Anthropic API")
+        p.add_argument("--provider", default="relay",
+                       choices=["relay", "anthropic", "claude-cli"],
+                       help="an OpenAI-compatible relay; Claude via the Anthropic API "
+                            "(per-token billing); or Claude via `claude -p` (your "
+                            "Claude subscription)")
         p.add_argument("--effort", default="medium",
                        choices=["low", "medium", "high", "xhigh", "max"],
                        help="Claude thinking effort (recorded in every game log)")
